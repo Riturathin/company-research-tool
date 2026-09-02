@@ -7,7 +7,7 @@ A focused full-stack take-home implementation for the Company Research Tool assi
 - **Backend:** Python 3.11+, FastAPI, Pydantic, SQLAlchemy 2.x
 - **Frontend:** React 18 + TypeScript + Vite
 - **Database:** SQLite
-- **LLM:** OpenAI API (`gpt-4.1-mini` by default) for structured synthesis
+- **LLM:** OpenRouter Chat Completions API (`openrouter/free` by default) for structured synthesis
 - **Search:** Google Search via Serper's Google Search API (`google.serper.dev/search`)
 
 The search provider is a Google Search API because the assignment specifically requires live Google Search results. The search layer is isolated so it can be swapped for another Google-compatible provider without changing the agent orchestration.
@@ -20,7 +20,7 @@ The search provider is a Google Search API because the assignment specifically r
 cp backend/.env.example backend/.env
 ```
 
-2. Add `OPENAI_API_KEY` and `SERPER_API_KEY`.
+2. Add `OPENROUTER_API_KEY` and `SERPER_API_KEY` if you want live mode.
 
 3. Start the backend:
 
@@ -44,7 +44,7 @@ Open the Vite URL shown in the terminal (typically `http://localhost:5173`).
 
 ## Optional mock mode
 
-Set `USE_MOCKS=true` to run the complete UI/API flow without external credentials. The agent implementation remains fully written around live Google Search + OpenAI integrations; mocks are only a local fallback.
+Set `USE_MOCKS=true` to run the complete UI/API flow without external credentials. The agent implementation remains fully written around live Google Search + OpenRouter integrations; mocks are only a local fallback.
 
 ## API
 
