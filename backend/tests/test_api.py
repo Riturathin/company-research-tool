@@ -28,6 +28,7 @@ def test_research_stream_saves_report(monkeypatch):
 
     assert response.status_code == 200
     body = response.text
+    assert "event: report" in body
     assert "event: section" in body
     assert "event: complete" in body
 

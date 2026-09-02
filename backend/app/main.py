@@ -9,10 +9,10 @@ from sqlalchemy.orm import Session
 
 from .agent import InvalidCompanyName, create_agent, validate_company_name
 from .config import get_settings
-from .database import get_db, init_db
+from .database import SessionLocal, get_db, init_db
 from .errors import duplicate_research_error, invalid_input_error, provider_error
-from .repository import create_report, delete_report, get_report, list_reports
-from .schemas import ReportData, ResearchRequest
+from .repository import create_report, delete_report, get_report, list_reports, update_report_data, update_report_section
+from .schemas import ReportData, ResearchRequest, SectionName
 
 
 @asynccontextmanager
@@ -60,8 +60,26 @@ def remove_report(report_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report not found.")
 
 
+@app.post("/api/reports/{report_id}/sections/{section}/retry")
+async def retry_report_section(report_id: int, section: SectionName, db: Session = Depends(get_db)):
+    item = get_report(db, report_id)
+    if item is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report not found.")
+    try:
+        agent = create_agent(settings)
+        section_data = await agent.research_one_section(item.company_name, section)
+        updated = update_report_section(db, report_id, section, section_data)
+        if updated is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report not found.")
+        return updated
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=provider_error(exc)) from exc
+
+
 @app.post("/api/research")
-async def research(request: ResearchRequest, db: Session = Depends(get_db)):
+async def research(request: ResearchRequest):
     try:
         company_name = validate_company_name(request.company_name)
     except InvalidCompanyName as exc:
@@ -76,16 +94,30 @@ async def research(request: ResearchRequest, db: Session = Depends(get_db)):
     async def event_stream():
         report_data = ReportData()
         agent = create_agent(settings)
+        report_id = None
         try:
+            with SessionLocal() as save_db:
+                saved = create_report(save_db, company_name, report_data)
+                report_id = saved.id
+            yield f"event: report\ndata: {json.dumps({'report_id': report_id})}\n\n"
             async for event in agent.research(company_name):
                 if isinstance(event.data, ReportData):
                     report_data = event.data
+                    if report_id is not None:
+                        with SessionLocal() as save_db:
+                            update_report_data(save_db, report_id, report_data)
                     continue
                 if event.status == "complete" and event.data is not None:
                     setattr(report_data, event.section, event.data)
+                    if event.message:
+                        report_data.section_errors[event.section] = event.message
+                    else:
+                        report_data.section_errors.pop(event.section, None)
+                    if report_id is not None:
+                        with SessionLocal() as save_db:
+                            update_report_data(save_db, report_id, report_data)
                 yield f"event: section\ndata: {event.model_dump_json()}\n\n"
-            saved = create_report(db, company_name, report_data)
-            yield f"event: complete\ndata: {json.dumps({'report_id': saved.id})}\n\n"
+            yield f"event: complete\ndata: {json.dumps({'report_id': report_id})}\n\n"
         except Exception as exc:
             yield f"event: error\ndata: {json.dumps(provider_error(exc))}\n\n"
         finally:

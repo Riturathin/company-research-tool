@@ -29,6 +29,7 @@ class ReportData(BaseModel):
     news: list[str] = Field(default_factory=list)
     financials: Financials = Field(default_factory=Financials)
     risks: list[str] = Field(default_factory=list)
+    section_errors: dict[SectionName, str] = Field(default_factory=dict)
 
 
 class ReportSummary(BaseModel):

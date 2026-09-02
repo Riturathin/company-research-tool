@@ -18,6 +18,7 @@ export type ReportData = {
   news: string[];
   financials: Financials;
   risks: string[];
+  section_errors: Partial<Record<SectionName, string>>;
 };
 
 export type ReportSummary = {

@@ -74,11 +74,12 @@ data: {"report_id":123}
 
 ## Design decisions / trade-offs
 
-- **Sequential section streaming:** keeps the mental model simple and guarantees the requested section order while still giving the user progressive feedback.
+- **Concurrent section research:** runs all five sections in parallel to reduce wait time while keeping the report cards displayed in the required order.
 - **Single SQLite database:** matches the assignment exactly and avoids unnecessary infrastructure.
 - **Provider adapters:** search and LLM code live behind small interfaces to make external API mocking straightforward in tests.
 - **Defensive null handling:** unavailable financial metrics remain `null` instead of being fabricated.
 - **Client-side stream ownership:** a new search aborts the prior fetch; unmount cleanup also aborts the active stream.
+- **Human-readable failures:** provider and stream errors are normalized into concise UI messages instead of raw stack traces.
 
 ## With more time
 

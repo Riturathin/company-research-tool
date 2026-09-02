@@ -34,23 +34,39 @@ class ResearchAgent:
         data = ReportData()
         for section in SECTION_ORDER:
             yield SectionEvent(section=section, status="started")
-            searches = await self._search_for_section(company_name, section)
-            try:
-                section_data = await self._synthesize_section(company_name, section, searches)
-            except ProviderError:
-                section_data = self._fallback_section(section)
+        tasks = {asyncio.create_task(self._research_section(company_name, section)): section for section in SECTION_ORDER}
+        for task in asyncio.as_completed(tasks):
+            section, section_data, section_error = await task
             self._merge(data, section, section_data)
-            yield SectionEvent(section=section, status="complete", data=getattr(data, section))
-            await asyncio.sleep(0)
+            if section_error:
+                data.section_errors[section] = section_error
+            yield SectionEvent(section=section, status="complete", data=getattr(data, section), message=section_error)
         yield SectionEvent(section="risks", status="complete", data=data)
 
     async def build_report_data(self, company_name: str) -> ReportData:
         data = ReportData()
-        for section in SECTION_ORDER:
+        results = await asyncio.gather(*(self._research_section(company_name, section) for section in SECTION_ORDER))
+        for section, section_data, section_error in results:
+            self._merge(data, section, section_data)
+            if section_error:
+                data.section_errors[section] = section_error
+        return data
+
+    async def research_one_section(self, company_name: str, section: SectionName) -> object:
+        searches = await self._search_for_section(company_name, section)
+        payload = await self._synthesize_section(company_name, section, searches)
+        data = ReportData()
+        self._merge(data, section, payload)
+        return getattr(data, section)
+
+    async def _research_section(self, company_name: str, section: SectionName) -> tuple[SectionName, dict[str, Any], str | None]:
+        try:
             searches = await self._search_for_section(company_name, section)
             section_data = await self._synthesize_section(company_name, section, searches)
-            self._merge(data, section, section_data)
-        return data
+            return section, section_data, None
+        except Exception:
+            section_data = self._fallback_section(section)
+            return section, section_data, "This section could not be completed. It will be retried when the report is opened."
 
     async def _search_for_section(self, company_name: str, section: SectionName) -> list[dict[str, str]]:
         query_map = {

@@ -1,7 +1,7 @@
 import { CheckCircle2, Clock, Loader2, Search, Trash2, XCircle } from "lucide-react";
 import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
-import { AppError, deleteReport, emptyReportData, fetchReport, fetchReports, streamResearch } from "./api";
-import type { ReportData, ReportSummary, SectionName, StreamStatus } from "./types";
+import { AppError, deleteReport, emptyReportData, fetchReport, fetchReports, retryReportSection, streamResearch } from "./api";
+import type { ReportData, ReportDetail, ReportSummary, SectionName, StreamStatus } from "./types";
 
 const sectionLabels: Record<SectionName, string> = {
   overview: "Company Overview",
@@ -19,6 +19,7 @@ export function App() {
   const [status, setStatus] = useState<StreamStatus>("idle");
   const [activeSection, setActiveSection] = useState<SectionName | null>(null);
   const [completedSections, setCompletedSections] = useState<Set<SectionName>>(new Set());
+  const [retryingSections, setRetryingSections] = useState<Set<SectionName>>(new Set());
   const [error, setError] = useState<AppError | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -71,29 +72,49 @@ export function App() {
     setError(null);
     setStatus("streaming");
     setSelectedReport({ id: 0, company_name: trimmed, created_at: new Date().toISOString() });
-    setReportData(emptyReportData());
-    setCompletedSections(new Set());
+      setReportData(emptyReportData());
+      setCompletedSections(new Set());
+      setRetryingSections(new Set());
 
     try {
       const id = await streamResearch(trimmed, controller.signal, (event) => {
+        if (event.type === "report") {
+          setSelectedReport((current) => ({ id: event.reportId, company_name: current?.company_name || trimmed, created_at: current?.created_at || new Date().toISOString() }));
+          setHistory((current) => [
+            { id: event.reportId, company_name: trimmed, created_at: new Date().toISOString() },
+            ...current.filter((item) => item.id !== event.reportId)
+          ]);
+        }
         if (event.type === "section" && event.status === "started") {
           setActiveSection(event.section);
         }
         if (event.type === "section" && event.status === "complete" && event.data !== null) {
           setActiveSection(event.section);
           setCompletedSections((current) => new Set(current).add(event.section));
-          setReportData((current) => ({ ...current, [event.section]: event.data }));
+          setReportData((current) => {
+            const sectionErrors = { ...current.section_errors };
+            if (event.message) {
+              sectionErrors[event.section] = event.message;
+            } else {
+              delete sectionErrors[event.section];
+            }
+            return { ...current, [event.section]: event.data, section_errors: sectionErrors };
+          });
         }
       });
       setStatus("complete");
       setActiveSection(null);
-      await refreshHistory();
       if (id) {
         const saved = await fetchReport(id);
         setSelectedReport(saved);
         setReportData(saved.data);
-        setCompletedSections(new Set(Object.keys(sectionLabels) as SectionName[]));
+        setCompletedSections(completedFromReport(saved.data));
+        setHistory((current) => [
+          { id: saved.id, company_name: saved.company_name, created_at: saved.created_at },
+          ...current.filter((item) => item.id !== saved.id)
+        ]);
       }
+      await refreshHistory();
     } catch (err) {
       if ((err as Error).name === "AbortError") return;
       setStatus("error");
@@ -108,14 +129,38 @@ export function App() {
     try {
       setStatus("complete");
       const detail = await fetchReport(id);
+      setCompanyName(detail.company_name);
       setSelectedReport(detail);
       setReportData(detail.data);
       setActiveSection(null);
-      setCompletedSections(new Set(Object.keys(sectionLabels) as SectionName[]));
+      setCompletedSections(completedFromReport(detail.data));
+      retryFailedSections(detail);
     } catch (err) {
       setStatus("error");
       setError(toDisplayError(err));
     }
+  }
+
+  async function retryFailedSections(report: ReportDetail) {
+    const sections = Object.keys(report.data.section_errors) as SectionName[];
+    await Promise.all(
+      sections.map(async (section) => {
+        setRetryingSections((current) => new Set(current).add(section));
+        try {
+          const updated = await retryReportSection(report.id, section);
+          setReportData(updated.data);
+          setCompletedSections(completedFromReport(updated.data));
+        } catch (err) {
+          setError(toDisplayError(err));
+        } finally {
+          setRetryingSections((current) => {
+            const next = new Set(current);
+            next.delete(section);
+            return next;
+          });
+        }
+      })
+    );
   }
 
   async function removeHistoryItem(id: number) {
@@ -125,9 +170,11 @@ export function App() {
       if (selectedReport?.id === id) {
         setSelectedReport(null);
         setReportData(emptyReportData());
+        setCompanyName("");
         setStatus("idle");
         setActiveSection(null);
         setCompletedSections(new Set());
+        setRetryingSections(new Set());
       }
     } catch (err) {
       setStatus("error");
@@ -178,14 +225,9 @@ export function App() {
         {error && (
           <div className="error-banner">
             <XCircle size={18} />
-            <div>
-              <strong>{error.title}</strong>
-              <ul>
-                {error.points.map((point) => (
-                  <li key={point}>{point}</li>
-                ))}
-              </ul>
-            </div>
+            <p>
+              <strong>{error.title}:</strong> {formatError(error)}
+            </p>
           </div>
         )}
 
@@ -201,6 +243,7 @@ export function App() {
             status={status}
             activeSection={activeSection}
             completedSections={completedSections}
+            retryingSections={retryingSections}
           />
         )}
       </main>
@@ -213,13 +256,15 @@ function ReportView({
   data,
   status,
   activeSection,
-  completedSections
+  completedSections,
+  retryingSections
 }: {
   companyName: string;
   data: ReportData;
   status: StreamStatus;
   activeSection: SectionName | null;
   completedSections: Set<SectionName>;
+  retryingSections: Set<SectionName>;
 }) {
   return (
     <section className="report">
@@ -237,16 +282,16 @@ function ReportView({
 
       {status === "streaming" && <Progress completed={completedSections.size} activeSection={activeSection} />}
 
-      <Section name="overview" active={activeSection === "overview"} complete={completedSections.has("overview")}>
+      <Section name="overview" active={activeSection === "overview" || retryingSections.has("overview")} complete={completedSections.has("overview")} error={data.section_errors.overview}>
         {data.overview ? <p>{data.overview}</p> : <Skeleton label="Building overview" />}
       </Section>
-      <Section name="key_people" active={activeSection === "key_people"} complete={completedSections.has("key_people")}>
+      <Section name="key_people" active={activeSection === "key_people" || retryingSections.has("key_people")} complete={completedSections.has("key_people")} error={data.section_errors.key_people}>
         {data.key_people.length ? data.key_people.map((person) => <p key={`${person.name}-${person.title}`}><strong>{person.name}</strong> - {person.title}</p>) : <Skeleton label="Finding leadership" />}
       </Section>
-      <Section name="news" active={activeSection === "news"} complete={completedSections.has("news")}>
+      <Section name="news" active={activeSection === "news" || retryingSections.has("news")} complete={completedSections.has("news")} error={data.section_errors.news}>
         {data.news.length ? <BulletList items={data.news} /> : <Skeleton label="Checking current news" />}
       </Section>
-      <Section name="financials" active={activeSection === "financials"} complete={completedSections.has("financials")}>
+      <Section name="financials" active={activeSection === "financials" || retryingSections.has("financials")} complete={completedSections.has("financials")} error={data.section_errors.financials}>
         {completedSections.has("financials") || status !== "streaming" ? (
           <div className="metrics">
             <Metric label="Revenue" value={data.financials.revenue} />
@@ -258,7 +303,7 @@ function ReportView({
           <Skeleton label="Looking up financial signals" />
         )}
       </Section>
-      <Section name="risks" active={activeSection === "risks"} complete={completedSections.has("risks")}>
+      <Section name="risks" active={activeSection === "risks" || retryingSections.has("risks")} complete={completedSections.has("risks")} error={data.section_errors.risks}>
         {data.risks.length ? <BulletList items={data.risks} /> : <Skeleton label="Assessing risks" />}
       </Section>
     </section>
@@ -279,14 +324,16 @@ function Progress({ completed, activeSection }: { completed: number; activeSecti
   );
 }
 
-function Section({ name, active, complete, children }: { name: SectionName; active: boolean; complete: boolean; children: ReactNode }) {
+function Section({ name, active, complete, error, children }: { name: SectionName; active: boolean; complete: boolean; error?: string; children: ReactNode }) {
+  const stateClass = active ? "active" : error ? "failed" : complete ? "complete" : "pending";
   return (
-    <article className={`report-section ${active ? "active" : ""}`}>
+    <article className={`report-section ${stateClass}`}>
       <h3>
         {sectionLabels[name]}
         {active && <Loader2 size={16} />}
         {complete && !active && <CheckCircle2 size={16} />}
       </h3>
+      {error && <p className="section-error">{error}</p>}
       {children}
     </article>
   );
@@ -325,6 +372,10 @@ function relativeTime(value: string) {
   return `${Math.floor(hours / 24)}d ago`;
 }
 
+function formatError(error: AppError) {
+  return error.points.join(" ");
+}
+
 function toDisplayError(err: unknown): AppError {
   if (typeof err === "object" && err !== null && "title" in err && "points" in err) {
     return err as AppError;
@@ -339,4 +390,8 @@ function toDisplayError(err: unknown): AppError {
     title: "Something went wrong",
     points: ["The request could not be completed.", "Please try again in a moment."]
   };
+}
+
+function completedFromReport(data: ReportData) {
+  return new Set((Object.keys(sectionLabels) as SectionName[]).filter((section) => !data.section_errors[section]));
 }

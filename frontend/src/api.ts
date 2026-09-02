@@ -6,7 +6,8 @@ export type AppError = {
 };
 
 export type ResearchStreamEvent =
-  | { type: "section"; section: SectionName; status: "started" | "complete" | "error"; data: unknown }
+  | { type: "section"; section: SectionName; status: "started" | "complete" | "error"; data: unknown; message?: string | null }
+  | { type: "report"; reportId: number }
   | { type: "complete"; reportId: number };
 
 const emptyFinancials = {
@@ -21,7 +22,8 @@ export const emptyReportData = () => ({
   key_people: [],
   news: [],
   financials: { ...emptyFinancials },
-  risks: []
+  risks: [],
+  section_errors: {}
 });
 
 export async function fetchReports(): Promise<ReportSummary[]> {
@@ -39,6 +41,15 @@ export async function fetchReport(id: number): Promise<ReportDetail> {
 export async function deleteReport(id: number): Promise<void> {
   const response = await fetch(`/api/reports/${id}`, { method: "DELETE" });
   if (!response.ok) throw toAppError("Could not delete that report.", ["The report may have already been removed.", "Refresh the page and try again."]);
+}
+
+export async function retryReportSection(id: number, section: SectionName): Promise<ReportDetail> {
+  const response = await fetch(`/api/reports/${id}/sections/${section}/retry`, { method: "POST" });
+  if (!response.ok) {
+    const detail = await response.json().catch(() => null);
+    throw normalizeErrorDetail(detail?.detail, `Could not retry ${section}.`);
+  }
+  return response.json();
 }
 
 export async function streamResearch(
@@ -76,8 +87,13 @@ export async function streamResearch(
           type: "section",
           section: event.data.section,
           status: event.data.status,
-          data: event.data.data
+          data: event.data.data,
+          message: event.data.message
         });
+      }
+      if (event.type === "report") {
+        reportId = event.data.report_id;
+        onEvent({ type: "report", reportId });
       }
       if (event.type === "complete") {
         reportId = event.data.report_id;

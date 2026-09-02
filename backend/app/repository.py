@@ -4,12 +4,22 @@ from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
 from .models import Report
-from .schemas import ReportData, ReportDetail, ReportSummary
+from .schemas import ReportData, ReportDetail, ReportSummary, SectionName
 
 
 def create_report(db: Session, company_name: str, data: ReportData) -> ReportDetail:
     report = Report(company_name=company_name, data_json=data.model_dump_json())
     db.add(report)
+    db.commit()
+    db.refresh(report)
+    return to_detail(report)
+
+
+def update_report_data(db: Session, report_id: int, data: ReportData) -> ReportDetail | None:
+    report = db.get(Report, report_id)
+    if report is None:
+        return None
+    report.data_json = data.model_dump_json()
     db.commit()
     db.refresh(report)
     return to_detail(report)
@@ -32,6 +42,19 @@ def delete_report(db: Session, report_id: int) -> bool:
     db.delete(report)
     db.commit()
     return True
+
+
+def update_report_section(db: Session, report_id: int, section: SectionName, section_data: object) -> ReportDetail | None:
+    report = db.get(Report, report_id)
+    if report is None:
+        return None
+    data = ReportData.model_validate(json.loads(report.data_json))
+    setattr(data, section, section_data)
+    data.section_errors.pop(section, None)
+    report.data_json = data.model_dump_json()
+    db.commit()
+    db.refresh(report)
+    return to_detail(report)
 
 
 def to_detail(report: Report) -> ReportDetail:

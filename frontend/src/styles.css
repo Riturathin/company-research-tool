@@ -164,15 +164,9 @@ input {
   padding: 12px 14px;
 }
 
-.error-banner strong {
-  display: block;
-  margin-bottom: 6px;
-}
-
-.error-banner ul {
+.error-banner p {
   margin: 0;
-  padding-left: 18px;
-  line-height: 1.45;
+  line-height: 1.5;
 }
 
 .empty-state {
@@ -264,16 +258,33 @@ input {
 }
 
 .report-section {
-  background: #ffffff;
   border: 1px solid #d8ddd4;
   border-radius: 8px;
   padding: 20px;
   margin-bottom: 14px;
+  transition: background 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
+}
+
+.report-section.pending {
+  background: linear-gradient(135deg, #ffffff 0%, #f0f2ef 100%);
+  border-color: #d8ddd4;
 }
 
 .report-section.active {
-  border-color: #24786a;
-  box-shadow: 0 0 0 3px rgba(36, 120, 106, 0.12);
+  background: linear-gradient(135deg, #ffffff 0%, #e7f1ff 100%);
+  border-color: #6aa5e8;
+  box-shadow: 0 0 0 3px rgba(74, 144, 226, 0.14);
+}
+
+.report-section.complete {
+  background: linear-gradient(135deg, #ffffff 0%, #e7f6ee 100%);
+  border-color: #71c391;
+  box-shadow: 0 0 0 1px rgba(66, 153, 99, 0.08);
+}
+
+.report-section.failed {
+  background: linear-gradient(135deg, #ffffff 0%, #fff0ed 100%);
+  border-color: #eba89f;
 }
 
 .report-section h3 {
@@ -327,6 +338,11 @@ input {
 .skeleton {
   color: #66736c;
   min-height: 24px;
+}
+
+.section-error {
+  color: #8a332a;
+  font-weight: 600;
 }
 
 @keyframes spin {
